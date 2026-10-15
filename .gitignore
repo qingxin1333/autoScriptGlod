@@ -4,3 +4,4 @@ dbg_*.png
 ui*.xml
 __pycache__/
 *.log
+look*.png
