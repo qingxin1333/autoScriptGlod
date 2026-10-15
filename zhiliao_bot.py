@@ -222,6 +222,7 @@ def main():
     dead_backs = 0           # 连续无效返回次数
     abandon_ad = False       # 放弃当前广告: 遇挽留弹窗点"坚持退出"
     exit_stay_fails = 0      # 挽留弹窗连点留下仍反复弹 -> 转退出
+    fast_claim_tries = 0     # "我要更快拿奖"弹层点击次数(跳外部仍不领奖则放弃)
     last_coin_sig = ""       # 金币弹窗去重签名
     coin_close_tries = 0     # 当前弹窗关闭尝试次数
     no_img = 0               # 连续截图失败次数
@@ -410,11 +411,19 @@ def main():
                     tap(w.x, w.y)
                     time.sleep(2)
                     continue
-                # 限时加速弹层: "我要更快拿奖" -> 浏览详情15s领奖(官方快速通道)
-                w = find(words, FAST_CLAIM)
+                # 限时加速弹层: "我要更快拿奖"按钮 -> 浏览详情15s领奖(官方快速通道)
+                # 注意: 标题"X秒更快拿奖"也会含关键词, 点标题无效, 须点按钮/标题下方按钮位
+                cands = find_all(words, FAST_CLAIM) if fast_claim_tries < 2 else []
+                w = next((w for w in cands if "我要" in w.text or "点我" in w.text
+                          or "立即" in w.text), None)
                 if w:
                     log(f"加速领奖弹层: {w.text}")
                     tap(w.x, w.y)
+                elif cands:
+                    log(f"加速领奖弹层(标题定位按钮): {cands[0].text}")
+                    tap(cands[0].x, cands[0].y + 970)
+                if w or cands:
+                    fast_claim_tries += 1   # 跳外部(常为荣耀自家广告页)仍不领奖 -> 最多试2次
                     want_jump_until = now + 15
                     outcome = rescue_stuck_ad()
                     if outcome == "external":
@@ -531,6 +540,7 @@ def main():
                 dead_backs = 0
                 abandon_ad = False
                 exit_stay_fails = 0
+                fast_claim_tries = 0
                 w = find(words, TASK_CLAIM)
                 if w:
                     log(f"任务按钮: {w.text}")
