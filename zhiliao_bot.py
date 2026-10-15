@@ -227,6 +227,7 @@ def main():
     abandon_ad = False       # 放弃当前广告: 遇挽留弹窗点"坚持退出"
     exit_stay_fails = 0      # 挽留弹窗连点留下仍反复弹 -> 转退出
     fast_claim_tries = 0     # "我要更快拿奖"弹层点击次数(跳外部仍不领奖则放弃)
+    earn_scrolls = 0         # 赚零花页连续下滑次数
     last_coin_sig = ""       # 金币弹窗去重签名
     coin_close_tries = 0     # 当前弹窗关闭尝试次数
     no_img = 0               # 连续截图失败次数
@@ -556,6 +557,17 @@ def main():
                 abandon_ad = False
                 exit_stay_fails = 0
                 fast_claim_tries = 0
+                # 提现面板"刷视频赚现金"底弹层 -> 点右上角X关掉, 回任务列表
+                if "提现记录" in text_all or "可提现金额" in text_all or "刷视频赚现金" in text_all:
+                    xw = next((w for w in words if w.text.strip(" Oo") in ("×", "X", "x", "✕")
+                               and w.x > 900 and w.y < 1100), None)
+                    log("关闭提现面板")
+                    if xw:
+                        tap(xw.x, xw.y)
+                    else:
+                        tap(1178, 843)
+                    time.sleep(2)
+                    continue
                 w = find(words, TASK_CLAIM)
                 if w:
                     log(f"任务按钮: {w.text}")
@@ -572,18 +584,32 @@ def main():
                     tap(w.x, w.y)
                     time.sleep(3)
                     continue
-                # 悬浮球 "再看X秒"/"领" -- 找右边缘小字
-                bubble = [w for w in words if "再看" in w.text or w.text in ("领", "领取")]
+                # 悬浮球 "再看X秒"/"领" -- 只在右边缘短文本(任务描述"再看55秒,可得N金币"不算)
+                bubble = [w for w in words if w.x > 900 and
+                          ("再看" in w.text or w.text.strip() in ("领", "领取")) and len(w.text) <= 8]
                 if bubble:
+                    log(f"悬浮球: {bubble[0].text}")
                     tap(bubble[0].x, bubble[0].y)
                     time.sleep(3)
                     continue
-                # 确保在赚零花页
+                # 赚零花页: 没在任务页就切过去; 已在但无可点任务 -> 下滑翻任务列表
                 w = find(words, TAB_EARN, blacklist=False)
                 if w and w.y > 2400:  # 底部栏
-                    log("切到赚零花页")
-                    tap(w.x, w.y)
-                    time.sleep(2)
+                    on_earn = "我的金币" in text_all or "刷视频领" in text_all or "福利" in text_all
+                    if not on_earn:
+                        log("切到赚零花页")
+                        tap(w.x, w.y)
+                        time.sleep(2)
+                    else:
+                        earn_scrolls += 1
+                        if earn_scrolls >= 7:
+                            log("翻完一轮, 点tab回顶部")
+                            tap(w.x, w.y)
+                            earn_scrolls = 0
+                        else:
+                            log("下滑翻任务列表")
+                            swipe(640, 2100, 640, 1000)
+                        time.sleep(2)
                     continue
 
             time.sleep(args.interval)
