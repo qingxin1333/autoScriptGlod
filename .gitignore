@@ -1,5 +1,6 @@
 screen*.png
 snap*.png
+dbg_*.png
 ui*.xml
 __pycache__/
 *.log
