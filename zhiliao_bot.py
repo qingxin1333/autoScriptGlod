@@ -42,7 +42,8 @@ INSTALL_DENY = ["禁止", "拒绝", "暂不"]            # 安装授权弹窗 ->
 # 广告挽留弹窗: "继续看X秒或下载安装即可领奖, 确定要退出吗?" [去领取奖励|坚持退出]
 # 注意: 弹窗里"X秒"会被误读成倒计时, 必须先于倒计时解析处理
 LEAVE_AD = ["坚持退出", "狠心离开", "仍要退出", "确认退出", "退出观看", "放弃奖励并退出"]
-STAY_AD = ["去领取奖励", "继续观看", "继续播放", "再看一会", "继续浏览"]
+STAY_AD = ["去领取奖励", "返回看视频", "继续看视频", "返回继续看", "继续看广告", "拒绝"]  # 强信号: 出现即弹窗
+STAY_SOFT = ["继续观看", "继续播放", "再看一会", "继续浏览"]  # 弱信号: 需配合退出词才点(广告正文也常见)
 SYS_PKGS = ("com.hihonor.iconnect", "com.hihonor.coauthservice", "com.android.systemui",
             "NotificationShade", "android", "com.miui", "com.huawei.systemmanager",
             "com.android.packageinstaller", "com.android.settings", "com.hihonor.systemmanager")
@@ -180,14 +181,17 @@ def rescue_stuck_ad(timeout=12):
     deadline = time.time() + timeout
     while time.time() < deadline:
         f = focus()
-        if f and not f.startswith(PKG):
+        # 外部APP才算有效跳转; 系统页(如荣耀管家广告Splash)是拦截替身, 浏览无效
+        if f and not f.startswith(PKG) and not f.startswith(SYS_PKGS):
             return "external"
         img = screenshot()
         if img is not None:
             ws = ocr(img)
             if find(ws, REWARD_DONE):
                 return "ok"
-            w = find(ws, ALLOW_OPEN, blacklist=False)
+            w = find(ws, ALLOW_OPEN, blacklist=False) or \
+                (next((w for w in ws if w.text.strip() == "允许"), None)
+                 if "想要打开" in " ".join(x.text for x in ws) else None)
             if w:
                 tap(w.x, w.y)
                 return "external"
@@ -316,11 +320,20 @@ def main():
                 time.sleep(2)
                 continue
 
-            # --- 3. 系统拦截跳转框 ---
-            # 刚点过CTA主动要跳 -> 仍要打开; 其余(广告自发乱跳/刚领完奖) -> 知道了取消
-            if find(words, INTERCEPT, blacklist=False):
+            # --- 3. 系统拦截跳转框(横幅"已拦截" 或 荣耀弹窗"想要打开...是否允许") ---
+            # 刚点过CTA主动要跳 -> 仍要打开/允许; 其余(广告自发乱跳/刚领完奖) -> 知道了/拒绝
+            jump_ask = find(words, INTERCEPT, blacklist=False) or "想要打开" in text_all
+            if jump_ask:
                 if now < want_jump_until:
-                    w = find(words, ALLOW_OPEN, blacklist=False)
+                    # 勾"今日不再提醒", 之后跳转不再弹框
+                    ck = find(words, ["不再提醒"], blacklist=False)
+                    if ck:
+                        log("勾选'今日不再提醒'")
+                        tap(ck.x, ck.y)
+                        time.sleep(1.5)
+                        continue
+                    w = find(words, ALLOW_OPEN, blacklist=False) or \
+                        next((w for w in words if w.text.strip() == "允许"), None)
                     if w:
                         log(f"放行跳转: {w.text}")
                         tap(w.x, w.y)
@@ -331,7 +344,7 @@ def main():
                     else:
                         time.sleep(1)
                 else:
-                    w = find(words, CANCEL_OPEN)
+                    w = find(words, CANCEL_OPEN + ["拒绝"], blacklist=False)
                     if w:
                         log(f"拦截框取消: {w.text}")
                         tap(w.x, w.y)
@@ -340,25 +353,27 @@ def main():
                     time.sleep(2)
                 continue
 
-            # --- 3.5 广告挽留弹窗(优先于倒计时解析, 否则"继续看21秒"被误读为cd) ---
+            # --- 3.5 广告挽留/询问弹窗(优先于倒计时解析, 否则"继续看X秒"被误读为cd) ---
+            # 弹窗选项分两类: 回广告页继续看(返回看视频/拒绝/去领取奖励) vs 退出(坚持退出等)
             leave = find(words, LEAVE_AD, blacklist=False)
-            if leave or "确定要退出" in text_all:
+            stay = find(words, STAY_AD, blacklist=False) or \
+                (find(words, STAY_SOFT, blacklist=False) if (leave or "确定要退出" in text_all) else None)
+            if leave or stay or "确定要退出" in text_all:
                 if (abandon_ad or exit_stay_fails >= 2) and leave:
                     log(f"挽留弹窗 -> {leave.text} (离开广告)")
                     tap(leave.x, leave.y)
                     abandon_ad = False
                     exit_stay_fails = 0
                 else:
-                    stay = find(words, STAY_AD, blacklist=False)
-                    if stay:
-                        log(f"挽留弹窗 -> {stay.text} (留下继续看)")
+                    if stay and exit_stay_fails < 2:
+                        log(f"广告弹窗 -> {stay.text} (返回继续看)")
                         tap(stay.x, stay.y)
                         exit_stay_fails += 1
                     elif leave:
                         tap(leave.x, leave.y)  # 没有留下按钮只能退
                         exit_stay_fails = 0
                     else:
-                        back()
+                        back()                 # 留下点了没用 -> 返回键破局
                 last_cd = None
                 last_cd_change = time.time()  # 留下后重新观察倒计时
                 time.sleep(2)
@@ -424,7 +439,7 @@ def main():
                     tap(cands[0].x, cands[0].y + 970)
                 if w or cands:
                     fast_claim_tries += 1   # 跳外部(常为荣耀自家广告页)仍不领奖 -> 最多试2次
-                    want_jump_until = now + 15
+                    want_jump_until = now + 20
                     outcome = rescue_stuck_ad()
                     if outcome == "external":
                         browse_wait(17)
@@ -458,7 +473,7 @@ def main():
                     if cta and stuck_rescues < 4:
                         log(f"卡死弹层(cd=None), 点CTA: {cta.text}")
                         tap(cta.x, cta.y)
-                        want_jump_until = now + 15
+                        want_jump_until = now + 20
                         outcome = rescue_stuck_ad()
                         if outcome == "external":
                             browse_wait(17)
@@ -503,7 +518,7 @@ def main():
                     if "上滑" in cta.text:
                         time.sleep(1)
                         swipe(cta.x, cta.y, cta.x, max(cta.y - 600, 300))
-                    want_jump_until = now + 15  # 允许跳转窗口: 拦截框点仍要打开
+                    want_jump_until = now + 20  # 允许跳转窗口: 拦截框点仍要打开
                     outcome = rescue_stuck_ad()
                     if outcome == "external":
                         browse_wait(17)     # 需连续浏览满15s, 提前切回任务会失败
