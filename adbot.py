@@ -286,6 +286,7 @@ def main():
     loops = 0
     earns = 0                # 本APP成功领奖次数
     last_earn = time.time()  # 最近一次领奖时间
+    last_alive = time.time() # 最近一次截图成功时间(断线时不计闲置)
 
     def earned(msg):
         nonlocal earns, last_earn
@@ -297,8 +298,11 @@ def main():
         loops += 1
         if args.max_loops and loops > args.max_loops:
             break
-        # 收益枯竭 -> 换APP
-        if earns >= args.max_earns or time.time() - last_earn > args.idle_min * 60:
+        # 收益枯竭 -> 换APP(断线期间不计闲置, 设备必须在线才算)
+        now0 = time.time()
+        depleted = earns >= args.max_earns or \
+            (now0 - last_earn > args.idle_min * 60 and now0 - last_alive < 60)
+        if depleted:
             nxt = None
             if args.rotate and len(APP_ORDER) > 1:
                 nxt = APP_ORDER[(app_idx + 1) % len(APP_ORDER)]
@@ -328,6 +332,7 @@ def main():
                 time.sleep(2)
                 continue
             no_img = 0
+            last_alive = time.time()
             words = ocr(img)
             text_all = " ".join(w.text for w in words)
             in_app = f.startswith(PKG)
